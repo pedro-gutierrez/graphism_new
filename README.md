@@ -5,7 +5,8 @@ Creates a new Graphism project
 ## Installation
 
 ```bash
-$ mix archive.install https://github.com/pedro-gutierrez/graphism_new/archives/raw/main/graphism_new.ez
+$ wget https://github.com/pedro-gutierrez/graphism_new/raw/main/graphism_new-0.1.0.ez
+$ mix archive.install ./graphism_new-0.1.0.ez
 ```
 
 ## Usage
