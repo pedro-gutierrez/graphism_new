@@ -1,6 +1,6 @@
 # Graphism New
 
-Creates a new Graphism project
+Creates a new [Graphism](https://github.com/Gravity-Core/graphism) project
 
 ## Installation
 
@@ -12,5 +12,5 @@ $ mix archive.install ./graphism_new-0.1.0.ez
 ## Usage
 
 ```bash
-$ mix graphism_new hwllo_world
+$ mix graphism_new hello_world
 ```
