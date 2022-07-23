@@ -9,7 +9,7 @@ defmodule Mix.Tasks.Graphism.New do
   Creates a new Elixir project.
   It expects the path of the project as argument.
 
-      mix graphism.new PATH [--app APP] [--module MODULE] [--sup] [--umbrella]
+      mix graphism.new PATH [--app APP] [--module MODULE]
 
   A project at the given PATH will be created. The
   application name and module name will be retrieved
@@ -33,9 +33,7 @@ defmodule Mix.Tasks.Graphism.New do
 
   @switches [
     app: :string,
-    module: :string,
-    sup: :boolean,
-    umbrella: :boolean
+    module: :string
   ]
 
   @impl true
@@ -59,20 +57,16 @@ defmodule Mix.Tasks.Graphism.New do
         end
 
         File.cd!(path, fn ->
-          if opts[:umbrella] do
-            generate_umbrella(app, mod, path, opts)
-          else
-            generate(app, mod, path, opts)
-          end
+          generate(app, mod, path)
         end)
     end
   end
 
-  defp generate(app, mod, path, opts) do
+  defp generate(app, mod, path) do
     assigns = [
       app: app,
       mod: mod,
-      sup_app: sup_app(mod, !!opts[:sup]),
+      sup_app: sup_app(mod),
       version: get_version(System.version())
     ]
 
@@ -81,19 +75,19 @@ defmodule Mix.Tasks.Graphism.New do
     create_file("README.md", readme_template(assigns))
     create_file(".formatter.exs", formatter_template(assigns))
     create_file(".gitignore", gitignore_template(assigns))
+    create_file("mix.exs", mix_exs_template(assigns))
 
-    if in_umbrella?() do
-      create_file("mix.exs", mix_exs_apps_template(assigns))
-    else
-      create_file("mix.exs", mix_exs_template(assigns))
-    end
+    create_directory("config")
+    create_file("config/config.exs", config_template(assigns))
+    create_file("config/runtime.exs", runtime_config_template(assigns))
 
     create_directory("lib")
-    create_file("lib/#{mod_filename}.ex", lib_template(assigns))
-
-    if opts[:sup] do
-      create_file("lib/#{mod_filename}/application.ex", lib_app_template(assigns))
-    end
+    create_file("lib/#{mod_filename}/application.ex", lib_app_template(assigns))
+    create_file("lib/#{mod_filename}/repo.ex", lib_repo_template(assigns))
+    create_file("lib/#{mod_filename}/auth.ex", lib_auth_template(assigns))
+    create_file("lib/#{mod_filename}/port.ex", lib_port_template(assigns))
+    create_file("lib/#{mod_filename}/router.ex", lib_router_template(assigns))
+    create_file("lib/#{mod_filename}/schema.ex", lib_schema_template(assigns))
 
     create_directory("test")
     create_file("test/test_helper.exs", test_helper_template(assigns))
@@ -102,51 +96,34 @@ defmodule Mix.Tasks.Graphism.New do
     """
 
     Your Mix project was created successfully.
-    You can use "mix" to compile it, test it, and more:
 
-        #{cd_path(path)}mix test
+    You can use "mix" to compile it:
+
+        #{cd_path(path)}mix deps.get
+        mix compile
+
+    Then initialise your database:
+
+        mix graphism.migrations
+        mix ecto.create 
+        mix ecto.migrate
+
+    Finally, you can test with "mix test".
 
     Run "mix help" for more commands.
+
+    To start your project: "iex -S mix". 
+
+    Check the GraphiQL UI at http://localhost:4001/graphiql. 
     """
     |> String.trim_trailing()
     |> Mix.shell().info()
   end
 
-  defp sup_app(_mod, false), do: ""
-  defp sup_app(mod, true), do: ",\n      mod: {#{mod}.Application, []}"
+  defp sup_app(mod), do: ",\n      mod: {#{mod}.Application, []}"
 
   defp cd_path("."), do: ""
   defp cd_path(path), do: "cd #{path}\n    "
-
-  defp generate_umbrella(_app, mod, path, _opts) do
-    assigns = [app: nil, mod: mod]
-
-    create_file("README.md", readme_template(assigns))
-    create_file(".formatter.exs", formatter_umbrella_template(assigns))
-    create_file(".gitignore", gitignore_template(assigns))
-    create_file("mix.exs", mix_exs_umbrella_template(assigns))
-
-    create_directory("apps")
-
-    create_directory("config")
-    create_file("config/config.exs", config_umbrella_template(assigns))
-
-    """
-
-    Your umbrella project was created successfully.
-    Inside your project, you will find an apps/ directory
-    where you can create and host many apps:
-
-        #{cd_path(path)}cd apps
-        mix new my_app
-
-    Commands like "mix compile" and "mix test" when executed
-    in the umbrella project root will automatically run
-    for each application in the apps/ directory.
-    """
-    |> String.trim_trailing()
-    |> Mix.shell().info()
-  end
 
   defp check_application_name!(name, inferred?) do
     unless name =~ ~r/^[a-z][a-z0-9_]*$/ do
@@ -197,19 +174,6 @@ defmodule Mix.Tasks.Graphism.New do
       end
   end
 
-  defp in_umbrella? do
-    apps = Path.dirname(File.cwd!())
-
-    try do
-      Mix.Project.in_project(:umbrella_check, "../..", fn _ ->
-        path = Mix.Project.config()[:apps_path]
-        path && Path.expand(path) == apps
-      end)
-    catch
-      _, _ -> false
-    end
-  end
-
   embed_template(:readme, """
   # <%= @mod %>
 
@@ -241,40 +205,15 @@ defmodule Mix.Tasks.Graphism.New do
   ]
   """)
 
-  embed_template(:formatter_umbrella, """
-  # Used by "mix format"
-  [
-    inputs: ["mix.exs", "config/*.exs"],
-    subdirectories: ["apps/*"]
-  ]
-  """)
-
   embed_template(:gitignore, """
-  # The directory Mix will write compiled artifacts to.
   /_build/
-
-  # If you run "mix test --cover", coverage assets end up here.
   /cover/
-
-  # The directory Mix downloads your dependencies sources to.
   /deps/
-
-  # Where third-party dependencies like ExDoc output generated docs.
   /doc/
-
-  # Ignore .fetch files in case you like to edit your project deps locally.
   /.fetch
-
-  # If the VM crashes, it generates a dump, let's ignore it too.
   erl_crash.dump
-
-  # Also ignore archive artifacts (built via "mix archive.build").
   *.ez
-  <%= if @app do %>
-  # Ignore package tarball (built via "mix hex.build").
   <%= @app %>-*.tar
-  <% end %>
-  # Temporary files, for example, from tests.
   /tmp/
   """)
 
@@ -295,126 +234,21 @@ defmodule Mix.Tasks.Graphism.New do
     # Run "mix help compile.app" to learn about applications.
     def application do
       [
-        extra_applications: [:logger]<%= @sup_app %>
+        extra_applications: [:graphism]<%= @sup_app %>
       ]
     end
 
     # Run "mix help deps" to learn about dependencies.
     defp deps do
       [
-        # {:dep_from_hexpm, "~> 0.3.0"},
-        # {:dep_from_git, git: "https://github.com/elixir-lang/my_dep.git", tag: "0.1.0"}
+        {:graphism, git: "https://github.com/gravity-core/graphism.git", tag: "v0.7.2"}
       ]
-    end
-  end
-  """)
-
-  embed_template(:mix_exs_apps, """
-  defmodule <%= @mod %>.MixProject do
-    use Mix.Project
-
-    def project do
-      [
-        app: :<%= @app %>,
-        version: "0.1.0",
-        build_path: "../../_build",
-        config_path: "../../config/config.exs",
-        deps_path: "../../deps",
-        lockfile: "../../mix.lock",
-        elixir: "~> <%= @version %>",
-        start_permanent: Mix.env() == :prod,
-        deps: deps()
-      ]
-    end
-
-    # Run "mix help compile.app" to learn about applications.
-    def application do
-      [
-        extra_applications: [:logger]<%= @sup_app %>
-      ]
-    end
-
-    # Run "mix help deps" to learn about dependencies.
-    defp deps do
-      [
-        # {:dep_from_hexpm, "~> 0.3.0"},
-        # {:dep_from_git, git: "https://github.com/elixir-lang/my_dep.git", tag: "0.1.0"},
-        # {:sibling_app_in_umbrella, in_umbrella: true}
-      ]
-    end
-  end
-  """)
-
-  embed_template(:mix_exs_umbrella, """
-  defmodule <%= @mod %>.MixProject do
-    use Mix.Project
-
-    def project do
-      [
-        apps_path: "apps",
-        version: "0.1.0",
-        start_permanent: Mix.env() == :prod,
-        deps: deps()
-      ]
-    end
-
-    # Dependencies listed here are available only for this
-    # project and cannot be accessed from applications inside
-    # the apps folder.
-    #
-    # Run "mix help deps" for examples and options.
-    defp deps do
-      []
-    end
-  end
-  """)
-
-  embed_template(:config_umbrella, ~S"""
-  # This file is responsible for configuring your umbrella
-  # and **all applications** and their dependencies with the
-  # help of the Config module.
-  #
-  # Note that all applications in your umbrella share the
-  # same configuration and dependencies, which is why they
-  # all use the same configuration file. If you want different
-  # configurations or dependencies per app, it is best to
-  # move said applications out of the umbrella.
-  import Config
-
-  # Sample configuration:
-  #
-  #     config :logger, :console,
-  #       level: :info,
-  #       format: "$date $time [$level] $metadata$message\n",
-  #       metadata: [:user_id]
-  #
-  """)
-
-  embed_template(:lib, """
-  defmodule <%= @mod %> do
-    @moduledoc \"""
-    Documentation for `<%= @mod %>`.
-    \"""
-
-    @doc \"""
-    Hello world.
-
-    ## Examples
-
-        iex> <%= @mod %>.hello()
-        :world
-
-    \"""
-    def hello do
-      :world
     end
   end
   """)
 
   embed_template(:lib_app, """
   defmodule <%= @mod %>.Application do
-    # See https://hexdocs.pm/elixir/Application.html
-    # for more information on OTP Applications
     @moduledoc false
 
     use Application
@@ -422,14 +256,96 @@ defmodule Mix.Tasks.Graphism.New do
     @impl true
     def start(_type, _args) do
       children = [
-        # Starts a worker by calling: <%= @mod %>.Worker.start_link(arg)
-        # {<%= @mod %>.Worker, arg}
+        <%= @mod %>.Repo,
+        <%= @mod %>.Port
       ]
 
-      # See https://hexdocs.pm/elixir/Supervisor.html
-      # for other strategies and supported options
       opts = [strategy: :one_for_one, name: <%= @mod %>.Supervisor]
       Supervisor.start_link(children, opts)
+    end
+  end
+  """)
+
+  embed_template(:lib_repo, """
+  defmodule <%= @mod %>.Repo do
+    @moduledoc false
+    use Ecto.Repo, otp_app: :<%= @app %>, adapter: Ecto.Adapters.Postgres
+  end
+  """)
+
+  embed_template(:lib_auth, """
+  defmodule <%= @mod %>.Auth do
+    @moduledoc false
+    
+    def allow?(_args, _context), do: true
+    def scope(query, _context), do: query
+  end
+  """)
+
+  embed_template(:lib_port, """
+  defmodule <%= @mod %>.Port do
+    @moduledoc false
+
+    def child_spec(_) do
+      Plug.Cowboy.child_spec(
+        scheme: :http,
+        plug: <%= @mod %>.Router,
+        options: [port: System.get_env("PORT", "4001") |> String.to_integer()]
+      )
+    end
+  end
+  """)
+
+  embed_template(:lib_router, """
+  defmodule <%= @mod %>.Router do
+    @moduledoc false
+    use Plug.Router
+
+    plug(Plug.Parsers,
+      parsers: [:urlencoded, :multipart, :json, Absinthe.Plug.Parser],
+      pass: ["*/*"],
+      json_decoder: Jason
+    )
+
+    plug(:match)
+    plug(:dispatch)
+
+    forward("/graphql", to: Absinthe.Plug, init_opts: [schema: <%= @mod %>.Schema])
+    
+    if Mix.env() == :dev do
+      forward("/graphiql",
+        to: Absinthe.Plug.GraphiQL,
+        init_opts: [
+          schema: <%= @mod %>.Schema,
+          default_url: "/api/graphql"
+        ]
+      )
+    end
+
+    get "/health" do
+      send_resp(conn, 200, "")
+    end
+
+    match _ do
+      send_resp(conn, 404, "")
+    end
+  end
+  """)
+
+  embed_template(:lib_schema, """
+  defmodule <%= @mod %>.Schema do
+    @moduledoc false
+    use Graphism, repo: <%= @mod %>.Repo
+    
+    allow(<%= @mod %>.Auth)
+
+    entity :user do
+      unique(string(:email))
+
+      action(:list)
+      action(:create)
+      action(:update)
+      action(:delete)
     end
   end
   """)
@@ -437,15 +353,23 @@ defmodule Mix.Tasks.Graphism.New do
   embed_template(:test, """
   defmodule <%= @mod %>Test do
     use ExUnit.Case
-    doctest <%= @mod %>
-
-    test "greets the world" do
-      assert <%= @mod %>.hello() == :world
-    end
   end
   """)
 
   embed_template(:test_helper, """
   ExUnit.start()
+  """)
+
+  embed_template(:config, """
+  import Config
+
+  config :<%= @app %>, ecto_repos: [<%= @mod %>.Repo]
+  config :graphism, schema: <%= @mod %>.Schema
+  """)
+
+  embed_template(:runtime_config, """
+  import Config
+
+  config :<%= @app %>, <%= @mod %>.Repo, database: "<%= @app %>"
   """)
 end
