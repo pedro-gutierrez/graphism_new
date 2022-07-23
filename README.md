@@ -1,4 +1,4 @@
-# Graphism New
+# Mix graphism.new
 
 Creates a new [Graphism](https://github.com/Gravity-Core/graphism) project
 
