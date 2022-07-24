@@ -114,7 +114,8 @@ defmodule Mix.Tasks.Graphism.New do
 
     To start your project: "iex -S mix". 
 
-    Check the GraphiQL UI at http://localhost:4001/graphiql. 
+    Check the GraphiQL UI at http://localhost:4001/graphiql.
+    Documentation for your REST Api is at http://localhost:4001/doc.
     """
     |> String.trim_trailing()
     |> Mix.shell().info()
@@ -241,7 +242,7 @@ defmodule Mix.Tasks.Graphism.New do
     # Run "mix help deps" to learn about dependencies.
     defp deps do
       [
-        {:graphism, git: "https://github.com/gravity-core/graphism.git", tag: "v0.7.3"}
+        {:graphism, git: "https://github.com/gravity-core/graphism.git", tag: "v0.8.0"}
       ]
     end
   end
@@ -311,6 +312,7 @@ defmodule Mix.Tasks.Graphism.New do
     plug(:dispatch)
 
     forward("/graphql", to: Absinthe.Plug, init_opts: [schema: <%= @mod %>.Schema])
+    forward("/api", to: Blog.Schema.Router)
     
     if Mix.env() == :dev do
       forward("/graphiql",
@@ -320,6 +322,7 @@ defmodule Mix.Tasks.Graphism.New do
           default_url: "/api/graphql"
         ]
       )
+      get("/doc", to: <%= @mod %>.Schema.RedocUI, init_opts: [spec_url: "/api/openapi.json"])
     end
 
     get "/health" do
