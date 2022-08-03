@@ -33,7 +33,9 @@ defmodule Mix.Tasks.Graphism.New do
 
   @switches [
     app: :string,
-    module: :string
+    module: :string,
+    rest: :boolean,
+    graphql: :boolean
   ]
 
   @impl true
@@ -57,17 +59,20 @@ defmodule Mix.Tasks.Graphism.New do
         end
 
         File.cd!(path, fn ->
-          generate(app, mod, path)
+          generate(app, mod, path, styles(opts))
         end)
     end
   end
 
-  defp generate(app, mod, path) do
+  defp generate(app, mod, path, styles) do
     assigns = [
       app: app,
       mod: mod,
       sup_app: sup_app(mod),
-      version: get_version(System.version())
+      version: get_version(System.version()),
+      graphql: Enum.member?(styles, :graphql),
+      rest: Enum.member?(styles, :rest),
+      styles: styles |> Enum.map(fn s -> ":#{s}" end) |> Enum.join(", ")
     ]
 
     mod_filename = Macro.underscore(mod)
@@ -113,12 +118,61 @@ defmodule Mix.Tasks.Graphism.New do
     Run "mix help" for more commands.
 
     To start your project: "iex -S mix". 
-
-    Check the GraphiQL UI at http://localhost:4001/graphiql.
-    Documentation for your REST Api is at http://localhost:4001/doc.
     """
+    |> user_info_with_urls(assigns)
+    |> friendly_message()
     |> String.trim_trailing()
     |> Mix.shell().info()
+  end
+
+  defp user_info_with_urls(text, assigns) do
+    text
+    |> user_info_maybe_with(
+      """
+
+      GraphQL useful urls:
+
+          Your GraphQL api: http://localhost:4001/graphql
+          GraphiQL development UI: http://localhost:4001/graphiql
+      """,
+      assigns[:graphql]
+    )
+    |> user_info_maybe_with(
+      """
+
+      REST useful urls:
+
+         Your REST api: http://localhost:4001/api
+         Redoc UI: http://localhost:4001/doc
+         OpenApi spec: http://localhost:4001/api/openapi.json
+      """,
+      assigns[:rest]
+    )
+  end
+
+  defp user_info_maybe_with(text, info, true), do: text <> info
+  defp user_info_maybe_with(text, _, false), do: text
+
+  defp friendly_message(text) do
+    user_info_maybe_with(
+      text,
+      """
+
+      Have fun :)
+
+      """,
+      true
+    )
+  end
+
+  defp styles(opts) do
+    with [] <-
+           opts
+           |> Keyword.take([:graphql, :rest])
+           |> Enum.filter(fn {_, enabled} -> enabled end)
+           |> Enum.map(fn {name, _} -> name end) do
+      [:graphql]
+    end
   end
 
   defp sup_app(mod), do: ",\n      mod: {#{mod}.Application, []}"
@@ -242,7 +296,7 @@ defmodule Mix.Tasks.Graphism.New do
     # Run "mix help deps" to learn about dependencies.
     defp deps do
       [
-        {:graphism, git: "https://github.com/gravity-core/graphism.git", tag: "v0.8.0"}
+        {:graphism, git: "https://github.com/gravity-core/graphism.git", branch: "rest"}
       ]
     end
   end
@@ -310,19 +364,19 @@ defmodule Mix.Tasks.Graphism.New do
 
     plug(:match)
     plug(:dispatch)
-
-    forward("/graphql", to: Absinthe.Plug, init_opts: [schema: <%= @mod %>.Schema])
-    forward("/api", to: Blog.Schema.Router)
+    <%= if @graphql do %>
+    forward("/graphql", to: Absinthe.Plug, init_opts: [schema: <%= @mod %>.Schema])<% end %><%= if @rest do %>
+    forward("/api", to: <%= @mod %>.Schema.Router)<% end %>
     
-    if Mix.env() == :dev do
+    if Mix.env() == :dev do<%= if @graphql do %>
       forward("/graphiql",
         to: Absinthe.Plug.GraphiQL,
         init_opts: [
           schema: <%= @mod %>.Schema,
           default_url: "/api/graphql"
         ]
-      )
-      get("/doc", to: <%= @mod %>.Schema.RedocUI, init_opts: [spec_url: "/api/openapi.json"])
+      )<% end %><%= if @rest do %>
+      get("/doc", to: <%= @mod %>.Schema.RedocUI, init_opts: [spec_url: "/api/openapi.json"])<% end %>
     end
 
     get "/health" do
@@ -338,7 +392,7 @@ defmodule Mix.Tasks.Graphism.New do
   embed_template(:lib_schema, """
   defmodule <%= @mod %>.Schema do
     @moduledoc false
-    use Graphism, repo: <%= @mod %>.Repo
+    use Graphism, repo: <%= @mod %>.Repo, styles: [<%= @styles %>]
     
     allow(<%= @mod %>.Auth)
 
