@@ -296,7 +296,7 @@ defmodule Mix.Tasks.Graphism.New do
     # Run "mix help deps" to learn about dependencies.
     defp deps do
       [
-        {:graphism, git: "https://github.com/gravity-core/graphism.git", branch: "rest"}
+        {:graphism, git: "https://github.com/gravity-core/graphism.git", tag: "v0.8.0"}
       ]
     end
   end
