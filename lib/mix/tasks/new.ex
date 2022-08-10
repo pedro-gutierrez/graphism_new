@@ -65,9 +65,12 @@ defmodule Mix.Tasks.Graphism.New do
   end
 
   defp generate(app, mod, path, styles) do
+    mod_filename = Macro.underscore(mod)
+
     assigns = [
       app: app,
       mod: mod,
+      mod_filename: mod_filename,
       sup_app: sup_app(mod),
       version: get_version(System.version()),
       graphql: Enum.member?(styles, :graphql),
@@ -75,12 +78,12 @@ defmodule Mix.Tasks.Graphism.New do
       styles: styles |> Enum.map(fn s -> ":#{s}" end) |> Enum.join(", ")
     ]
 
-    mod_filename = Macro.underscore(mod)
-
     create_file("README.md", readme_template(assigns))
     create_file(".formatter.exs", formatter_template(assigns))
+    create_file("coveralls.json", coveralls_template(assigns))
     create_file(".gitignore", gitignore_template(assigns))
     create_file("mix.exs", mix_exs_template(assigns))
+    create_file("Dockerfile", dockerfile_template(assigns))
 
     create_directory("config")
     create_file("config/config.exs", config_template(assigns))
@@ -94,9 +97,15 @@ defmodule Mix.Tasks.Graphism.New do
     create_file("lib/#{mod_filename}/router.ex", lib_router_template(assigns))
     create_file("lib/#{mod_filename}/schema.ex", lib_schema_template(assigns))
 
-    create_directory("test")
+    create_directory("test/support")
     create_file("test/test_helper.exs", test_helper_template(assigns))
-    create_file("test/#{mod_filename}_test.exs", test_template(assigns))
+    create_file("test/support/#{mod_filename}_case.ex", test_case_template(assigns))
+
+    if Enum.member?(styles, :rest) do
+      create_file("test/user_test.exs", user_rest_test_template(assigns))
+    end
+
+    create_directory("priv/repo/migrations")
 
     """
 
@@ -260,6 +269,16 @@ defmodule Mix.Tasks.Graphism.New do
   ]
   """)
 
+  embed_template(:coveralls, """
+  {
+    "skip_files": [
+      "lib/<%= @mod_filename %>/release.ex",
+      "lib/<%= @mod_filename %>/repo.ex",
+      "test/support"
+    ]
+  }
+  """)
+
   embed_template(:gitignore, """
   /_build/
   /cover/
@@ -272,6 +291,26 @@ defmodule Mix.Tasks.Graphism.New do
   /tmp/
   """)
 
+  embed_template(:dockerfile, """
+  FROM elixir:<%= @version %>-alpine as builder
+  RUN apk add --no-cache --update bash git openssl
+  ENV MIX_ENV=prod
+  COPY config ./config
+  COPY lib ./lib
+  COPY mix.exs .
+  COPY mix.lock .
+  RUN mix local.rebar --force \\
+      && mix local.hex --force \\
+      && mix deps.get \\
+      && mix release
+
+  FROM alpine:3
+  RUN apk add --no-cache --update bash openssl
+  WORKDIR /app
+  COPY --from=builder _build/prod/rel/<%= @mod_filename %>/ .
+  CMD ["/app/bin/<%= @mod_filename %>", "start"]
+  """)
+
   embed_template(:mix_exs, """
   defmodule <%= @mod %>.MixProject do
     use Mix.Project
@@ -282,9 +321,24 @@ defmodule Mix.Tasks.Graphism.New do
         version: "0.1.0",
         elixir: "~> <%= @version %>",
         start_permanent: Mix.env() == :prod,
-        deps: deps()
+        deps: deps(),
+        elixirc_paths: elixirc_paths(Mix.env()),
+        aliases: aliases(),
+        test_coverage: [tool: ExCoveralls],
+        preferred_cli_env: [
+          coveralls: :test
+        ]
       ]
     end
+
+    def aliases do
+      [
+        test: ["ecto.create --quiet", "ecto.migrate", "test"]
+      ]
+    end
+
+    def elixirc_paths(:test), do: ["lib", "test/support"]
+    def elixirc_paths(_), do: ["lib"]
 
     # Run "mix help compile.app" to learn about applications.
     def application do
@@ -296,6 +350,8 @@ defmodule Mix.Tasks.Graphism.New do
     # Run "mix help deps" to learn about dependencies.
     defp deps do
       [
+        {:credo, "~> 1.6", only: [:dev, :test], runtime: false},
+        {:excoveralls, "~> 0.14.0", only: [:test]},
         {:graphism, git: "https://github.com/gravity-core/graphism.git", tag: "v0.8.1"}
       ]
     end
@@ -407,26 +463,126 @@ defmodule Mix.Tasks.Graphism.New do
   end
   """)
 
-  embed_template(:test, """
-  defmodule <%= @mod %>Test do
-    use ExUnit.Case
-  end
-  """)
-
-  embed_template(:test_helper, """
-  ExUnit.start()
-  """)
-
   embed_template(:config, """
   import Config
 
   config :<%= @app %>, ecto_repos: [<%= @mod %>.Repo]
   config :graphism, schema: <%= @mod %>.Schema
+
+  if config_env() == :test do
+    config :logger, level: :warn
+
+    config :<%= @app%>, <%= @mod %>.Repo,
+      database: "<%= @app %>_test",
+      pool: Ecto.Adapters.SQL.Sandbox
+  end
   """)
 
   embed_template(:runtime_config, """
   import Config
 
-  config :<%= @app %>, <%= @mod %>.Repo, database: "<%= @app %>"
+  if config_env() != :test do
+    config :logger,
+      level: System.get_env("LOG_LEVEL", "info") |> String.to_existing_atom()
+
+    config :<%= @app %>, <%= @mod %>.Repo,
+      database: "<%= @app %>"
+  end
+  """)
+
+  embed_template(:test_helper, """
+  ExUnit.start()
+  Ecto.Adapters.SQL.Sandbox.mode(<%= @mod %>.Repo, :manual)
+  """)
+
+  embed_template(:test_case, """
+  defmodule <%= @mod %>.Case do
+    @moduledoc "A base template for all test cases"
+    use ExUnit.CaseTemplate
+
+    using do
+      quote do
+        use Plug.Test
+
+        import Ecto
+        import Ecto.Query
+        import <%= @mod %>.Case
+
+        alias <%= @mod %>.Repo
+
+        @options <%= @mod %>.Router.init([])
+
+        setup tags do
+          :ok = Ecto.Adapters.SQL.Sandbox.checkout(<%= @mod %>.Repo)
+
+          unless tags[:async] do
+            Ecto.Adapters.SQL.Sandbox.mode(<%= @mod %>.Repo, {:shared, self()})
+          end
+
+          :ok
+        end
+
+        defp get(path, opts \\\\ []), do: request(:get, path, opts)
+        defp post(path, opts \\\\ []), do: request(:post, path, opts)
+        defp put(path, opts \\\\ []), do: request(:put, path, opts)
+        defp delete(path, opts \\\\ []), do: request(:delete, path, opts)
+
+        defp post_json(path, data, opts \\\\ []) do
+          method = opts[:method] || :post
+          data = Jason.encode!(data)
+          headers = opts[:headers] || %{}
+          headers = Map.put(headers, "content-type", "application/json")
+
+          request(method, path, headers: headers, params: data)
+        end
+
+        defp request(method, path, opts) do
+          conn =
+            method
+            |> conn(path, opts[:params])
+            |> with_req_headers(opts[:headers] || %{})
+            |> <%= @mod %>.Router.call(@options)
+        end
+
+        defp with_req_headers(conn, headers) do
+          Enum.reduce(headers, conn, fn {key, value}, conn ->
+            put_req_header(conn, key, value)
+          end)
+        end
+
+        defp json_response(conn, status \\\\ 200) do
+          assert :sent == conn.state
+          assert status == conn.status
+          Jason.decode!(conn.resp_body)
+        end
+      end
+    end
+  end
+  """)
+
+  embed_template(:user_rest_test, """
+  defmodule <%= @mod %>.UserTest do
+    use <%= @mod %>.Case
+
+    describe "POST /api/users" do
+      test "creates a new user" do
+        assert %{"id" => _, "email" => _} =
+          post_json("/api/users", %{email: "alice@example.com"})
+          |> json_response(201)
+      end
+
+      test "does not create the same user twice" do
+        post_json("/api/users", %{email: "alice@example.com"})
+        |> json_response(201)
+
+        post_json("/api/users", %{email: "alice@example.com"})
+        |> json_response(409)
+
+        assert [%{"id" => _}] =
+          get("/api/users")
+          |> json_response()
+      end
+    end
+  end
   """)
 end
