@@ -101,6 +101,9 @@ defmodule Mix.Tasks.Graphism.New do
     create_file("test/test_helper.exs", test_helper_template(assigns))
     create_file("test/support/#{mod_filename}_case.ex", test_case_template(assigns))
 
+    create_directory(".github/workflows")
+    create_file(".github/workflows/ci.yml", ci_template(assigns))
+
     if Enum.member?(styles, :rest) do
       create_file("test/user_test.exs", user_rest_test_template(assigns))
     end
@@ -117,16 +120,17 @@ defmodule Mix.Tasks.Graphism.New do
         mix compile
 
     Then initialise your database:
-
+        
+        createuser <%= @app %> -d
         mix graphism.migrations
-        mix ecto.create 
+        mix ecto.create
         mix ecto.migrate
 
     Finally, you can test with "mix test".
 
     Run "mix help" for more commands.
 
-    To start your project: "iex -S mix". 
+    To start your project: "iex -S mix".
     """
     |> user_info_with_urls(assigns)
     |> friendly_message()
@@ -351,6 +355,7 @@ defmodule Mix.Tasks.Graphism.New do
     defp deps do
       [
         {:credo, "~> 1.6", only: [:dev, :test], runtime: false},
+        {:dialyxir, "~> 1.0", only: [:dev], runtime: false},
         {:excoveralls, "~> 0.14.0", only: [:test]},
         {:graphism, git: "https://github.com/gravity-core/graphism.git", tag: "v0.8.1"}
       ]
@@ -387,7 +392,7 @@ defmodule Mix.Tasks.Graphism.New do
   embed_template(:lib_auth, """
   defmodule <%= @mod %>.Auth do
     @moduledoc false
-    
+
     def allow?(_args, _context), do: true
     def scope(query, _context), do: query
   end
@@ -420,10 +425,10 @@ defmodule Mix.Tasks.Graphism.New do
 
     plug(:match)
     plug(:dispatch)
-    <%= if @graphql do %>
+  <%= if @graphql do %>
     forward("/graphql", to: Absinthe.Plug, init_opts: [schema: <%= @mod %>.Schema])<% end %><%= if @rest do %>
     forward("/api", to: <%= @mod %>.Schema.Router)<% end %>
-    
+
     if Mix.env() == :dev do<%= if @graphql do %>
       forward("/graphiql",
         to: Absinthe.Plug.GraphiQL,
@@ -449,7 +454,7 @@ defmodule Mix.Tasks.Graphism.New do
   defmodule <%= @mod %>.Schema do
     @moduledoc false
     use Graphism, repo: <%= @mod %>.Repo, styles: [<%= @styles %>]
-    
+
     allow(<%= @mod %>.Auth)
 
     entity :user do
@@ -474,6 +479,8 @@ defmodule Mix.Tasks.Graphism.New do
 
     config :<%= @app%>, <%= @mod %>.Repo,
       database: "<%= @app %>_test",
+      username: "<%= @app %>",
+      password: "<%= @app %>",
       pool: Ecto.Adapters.SQL.Sandbox
   end
   """)
@@ -485,8 +492,7 @@ defmodule Mix.Tasks.Graphism.New do
     config :logger,
       level: System.get_env("LOG_LEVEL", "info") |> String.to_existing_atom()
 
-    config :<%= @app %>, <%= @mod %>.Repo,
-      database: "<%= @app %>"
+    config :<%= @app %>, <%= @mod %>.Repo, database: "<%= @app %>"
   end
   """)
 
@@ -508,15 +514,16 @@ defmodule Mix.Tasks.Graphism.New do
         import Ecto.Query
         import <%= @mod %>.Case
 
+        alias Ecto.Adapters.SQL.Sandbox
         alias <%= @mod %>.Repo
 
         @options <%= @mod %>.Router.init([])
 
         setup tags do
-          :ok = Ecto.Adapters.SQL.Sandbox.checkout(<%= @mod %>.Repo)
+          :ok = Sandbox.checkout(Repo)
 
           unless tags[:async] do
-            Ecto.Adapters.SQL.Sandbox.mode(<%= @mod %>.Repo, {:shared, self()})
+            Sandbox.mode(Repo, {:shared, self()})
           end
 
           :ok
@@ -567,8 +574,8 @@ defmodule Mix.Tasks.Graphism.New do
     describe "POST /api/users" do
       test "creates a new user" do
         assert %{"id" => _, "email" => _} =
-          post_json("/api/users", %{email: "alice@example.com"})
-          |> json_response(201)
+                 post_json("/api/users", %{email: "alice@example.com"})
+                 |> json_response(201)
       end
 
       test "does not create the same user twice" do
@@ -579,10 +586,76 @@ defmodule Mix.Tasks.Graphism.New do
         |> json_response(409)
 
         assert [%{"id" => _}] =
-          get("/api/users")
-          |> json_response()
+                 get("/api/users")
+                 |> json_response()
       end
     end
   end
+  """)
+
+  embed_template(:ci, """
+  name: CI
+  on: push
+  env:
+    MIX_ENV: test
+    DEPS_CACHE_VERSION: v1
+    PLT_CACHE_VERSION: v1
+    ELIXIR_VERSION: 1.12
+    ERLANG_VERSION: 24.0
+  jobs:
+    build-and-test:
+      runs-on: ubuntu-latest
+      services:
+        postgres:
+          env:
+            POSTGRES_DB: <%= @app %>_test
+            POSTGRES_PASSWORD: <%= @app %>
+            POSTGRES_USER: <%= @app %>
+          image: postgres:13-alpine
+          ports:
+            - 5432:5432
+          options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+      steps:
+        - name: Checkout
+          uses: actions/checkout@v2
+        - name: Setup elixir
+          uses: erlef/setup-beam@v1
+          with:
+            elixir-version: ${{ env.ELIXIR_VERSION }}
+            otp-version: ${{ env.ERLANG_VERSION }}
+        - name: Fetch Mix cache
+          id: mix-cache
+          uses: actions/cache@v2
+          with:
+            path: |
+              deps
+              _build
+              !_build/${{ env.MIX_ENV }}/<%= @mod_filename %>
+            key: ${{ runner.os }}-deps-erlang-${{ env.ERLANG_VERSION }}-elixir-${{ env.ELIXIR_VERSION }}-mix-${{ hashFiles('**/mix.lock') }}-${{ env.DEPS_CACHE_VERSION }}
+        - name: Get dependencies
+          if: steps.mix-cache.outputs.cache-hit != 'true'
+          run: |
+            mix local.rebar --force
+            mix local.hex --force
+            mix deps.get
+        - name: Check Formatting
+          run: mix format --check-formatted
+        - name: Compile
+          run: mix compile
+        - name: Credo
+          run: mix credo --strict
+        - name: Run Tests
+          run: mix test
+        - name: Fetch PLT cache
+          id: plt-cache
+          uses: actions/cache@v2
+          with:
+            path: |
+              .dialyzer_cache
+              ~/.cache/dialyzer/plts
+              _build/${{ env.MIX_ENV }}/*.plt
+            key: ${{ runner.os }}-plt-erlang-${{ env.ERLANG_VERSION }}-elixir-${{ env.ELIXIR_VERSION }}-mix-${{ hashFiles('**/mix.lock') }}-${{ env.PLT_CACHE_VERSION }}
+        - name: Dialyzer
+          run: mix dialyzer
   """)
 end
