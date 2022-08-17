@@ -355,9 +355,9 @@ defmodule Mix.Tasks.Graphism.New do
     defp deps do
       [
         {:credo, "~> 1.6", only: [:dev, :test], runtime: false},
-        {:dialyxir, "~> 1.0", only: [:dev], runtime: false},
+        {:dialyxir, "~> 1.0", only: [:dev, :test], runtime: false},
         {:excoveralls, "~> 0.14.0", only: [:test]},
-        {:graphism, git: "https://github.com/gravity-core/graphism.git", tag: "v0.8.1"}
+        {:graphism, git: "https://github.com/gravity-core/graphism.git", tag: "v0.8.2"}
       ]
     end
   end
@@ -436,7 +436,8 @@ defmodule Mix.Tasks.Graphism.New do
           schema: <%= @mod %>.Schema,
           default_url: "/api/graphql"
         ]
-      )<% end %><%= if @rest do %>
+      )
+  <% end %><%= if @rest do %>
       get("/doc", to: <%= @mod %>.Schema.RedocUI, init_opts: [spec_url: "/api/openapi.json"])<% end %>
     end
 
@@ -455,7 +456,7 @@ defmodule Mix.Tasks.Graphism.New do
     @moduledoc false
     use Graphism, repo: <%= @mod %>.Repo, styles: [<%= @styles %>]
 
-    allow(<%= @mod %>.Auth)
+    # allow(<%= @mod %>.Auth)
 
     entity :user do
       unique(string(:email))
@@ -657,5 +658,7 @@ defmodule Mix.Tasks.Graphism.New do
             key: ${{ runner.os }}-plt-erlang-${{ env.ERLANG_VERSION }}-elixir-${{ env.ELIXIR_VERSION }}-mix-${{ hashFiles('**/mix.lock') }}-${{ env.PLT_CACHE_VERSION }}
         - name: Dialyzer
           run: mix dialyzer
+        - name: Docker image
+          run: docker build -t <%= @app %>:latest .
   """)
 end
