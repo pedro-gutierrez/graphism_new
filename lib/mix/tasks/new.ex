@@ -331,7 +331,8 @@ defmodule Mix.Tasks.Graphism.New do
         test_coverage: [tool: ExCoveralls],
         preferred_cli_env: [
           coveralls: :test
-        ]
+        ],
+        dialyzer: [plt_add_apps: [:ex_unit]]
       ]
     end
 
