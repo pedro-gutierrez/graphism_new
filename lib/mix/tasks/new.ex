@@ -120,8 +120,8 @@ defmodule Mix.Tasks.Graphism.New do
         mix compile
 
     Then initialise your database:
-        
-        createuser <%= @app %> -d
+
+        createuser #{app} -d
         mix graphism.migrations
         mix ecto.create
         mix ecto.migrate
