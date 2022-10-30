@@ -358,7 +358,7 @@ defmodule Mix.Tasks.Graphism.New do
         {:credo, "~> 1.6", only: [:dev, :test], runtime: false},
         {:dialyxir, "~> 1.0", only: [:dev, :test], runtime: false},
         {:excoveralls, "~> 0.14.0", only: [:test]},
-        {:graphism, git: "https://github.com/gravity-core/graphism.git", tag: "v0.8.2"}
+        {:graphism, git: "https://github.com/gravity-core/graphism.git", tag: "v0.9.0"}
       ]
     end
   end
