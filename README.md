@@ -12,5 +12,5 @@ $ mix archive.install ./graphism_new-0.1.0.ez
 ## Usage
 
 ```bash
-$ mix graphism_new hello_world --graphql --rest
+$ mix graphism.new hello_world --graphql --rest
 ```
